@@ -2,8 +2,9 @@ import asyncio
 import logging
 import os
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ChatMemberUpdated
 from aiogram.filters import Command
+from aiogram.enums import ChatMemberStatus
 from aiohttp import web
 
 # --- SOZLAMALAR ---
@@ -45,17 +46,6 @@ async def delete_service_messages(message: Message):
     try:
         await message.delete()
         stats["deleted_service"] += 1
-        
-        group_name = message.chat.title
-        group_id = message.chat.id
-        user = message.from_user.full_name if message.from_user else "Noma'lum"
-        
-        log_text = (
-            f"🧹 **Xizmat xabari o'chirildi!**\n"
-            f"🏢 Guruh: {group_name} (`{group_id}`)\n"
-            f"👤 Foydalanuvchi/Holat: {user}"
-        )
-        await send_log(log_text)
     except Exception as e:
         logging.error(f"Xizmat xabari xatosi: {e}")
 
@@ -64,47 +54,23 @@ async def delete_service_messages(message: Message):
 async def delete_pinned_service_message(message: Message):
     global stats
     try:
-        pinned_text = message.pinned_message.text or message.pinned_message.caption or "Media/Fayl"
         await message.delete()
         stats["deleted_pins"] += 1
-        
-        group_name = message.chat.title
-        group_id = message.chat.id
-        
-        log_text = (
-            f"📌 **Pin xabari tozalandi!**\n"
-            f"🏢 Guruh: {group_name} (`{group_id}`)\n"
-            f"💬 O'chirilgan pin matni: {pinned_text[:100]}"
-        )
-        await send_log(log_text)
     except Exception as e:
         logging.error(f"Pin xabari xatosi: {e}")
 
-# --- 3. '+' BILAN BOSHLANGAN XABARLARni o'chirish ---
+# --- 3. '+' BILAN BOSHLANGAN XABARLARNI O'CHIRISH ---
 @dp.message(F.text.startswith("+"))
 async def delete_plus_messages(message: Message):
     global stats
     try:
-        content = message.text
         await message.delete()
         stats["deleted_plus"] += 1
-        
-        group_name = message.chat.title
-        user = message.from_user.full_name if message.from_user else "Noma'lum"
-        
-        log_text = (
-            f"➕ **'+' xabari o'chirildi!**\n"
-            f"🏢 Guruh: {group_name}\n"
-            f"👤 Kim yozdi: {user}\n"
-            f"💬 Matn: {content}"
-        )
-        # Istasangiz "+" lar log guruhini to'ldirib yubormasligi uchun pastdagi qatorni o'chirib tashlashingiz mumkin:
-        await send_log(log_text)
     except Exception as e:
         logging.error(f"'+' xabari xatosi: {e}")
 
-# --- 4. MAXSUS MODERATOR BUYRUQLARI VA BAN LOGLARI ---
-@dp.message(F.text.regexp(r"^/(ban|kick|mute|unmute|warn|unban)\b"))
+# --- 4. MODERATOR BUYRUQLARINI O'CHIRISH ---
+@dp.message(F.text.regexp(r"^/(ban|kick|mute|unmute|warn|unban)(\s+@?\w+)?\b"))
 async def delete_mod_commands(message: Message):
     global stats
     try:
@@ -112,38 +78,68 @@ async def delete_mod_commands(message: Message):
         group_name = message.chat.title
         group_id = message.chat.id
         
-        # Kim tomonidan (Rayxon masalan)
         rayxon = message.from_user.full_name if message.from_user else "Noma'lum"
-        rayxon_id = message.from_user.id if message.from_user else 0
         
-        # Kimga nisbatan (Aziz masalan - agar reply qilingan bo'lsa)
-        aziz = "Ko'rsatilmagan (Reply qilinmagan)"
+        aziz = "Ko'rsatilmagan"
+        target_user_id = None
         if message.reply_to_message and message.reply_to_message.from_user:
             aziz = message.reply_to_message.from_user.full_name
+            target_user_id = message.reply_to_message.from_user.id
 
         await message.delete()
         stats["deleted_commands"] += 1
         
-        if "ban" in command_text.lower() or "kick" in command_text.lower():
+        if "ban" in command_text.lower() and target_user_id:
             stats["total_bans"] += 1
+            try:
+                await bot.ban_chat_member(chat_id=group_id, user_id=target_user_id)
+            except Exception as b_err:
+                logging.error(f"Ban qilish xatosi: {b_err}")
 
-        # To'liq va tushunarli log xabari
         log_text = (
-            f"🚨 **Moderator buyrug'i bajarildi!**\n\n"
-            f"🏢 Guruh: {group_name} (`{group_id}`)\n"
+            f"🚨 **Buyruq orqali harakat:**\n"
+            f"🏢 Guruh: {group_name}\n"
             f"⚙️ Buyruq: {command_text}\n"
-            f"👮 Kim tomonidan: {rayxon} (ID: `{rayxon_id}`)\n"
+            f"👮 Kim tomonidan: {rayxon}\n"
             f"👤 Kimga (Aziz): {aziz}"
         )
         await send_log(log_text)
     except Exception as e:
         logging.error(f"Buyruqni o'chirishda xatolik: {e}")
 
-# --- 5. ADMIN PANEL VA STATISTIKA ---
+# --- 5. GURUHDA KIMDIR BAN QILINGANINI (QO'LDA / NEDAVNIY ORQALI) USHLASH ---
+@dp.chat_member()
+async def track_user_ban(event: ChatMemberUpdated):
+    global stats
+    # Agar foydalanuvchi BANNED holatiga o'tgan bo'lsa
+    if event.new_chat_member.status == ChatMemberStatus.BANNED:
+        stats["total_bans"] += 1
+        group_name = event.chat.title
+        group_id = event.chat.id
+        
+        # Ban qilingan odam (Aziz)
+        aziz = event.new_chat_member.user.full_name
+        aziz_id = event.new_chat_member.user.id
+        
+        # Kim ban qilgani (Rayxon / Admin)
+        # Eslatma: Telegram qoidalari bo'yicha qo'lda qilingan banlarda ba'zan admin ismi to'g'ridan-to'g'ri kelmasligi mumkin, lekin chat ma'lumotidan olinadi
+        rayxon = "Noma'lum (Admin)"
+        if event.from_user:
+            rayxon = event.from_user.full_name
+
+        log_text = (
+            f"🚫 **Guruhda Ban berildi!**\n\n"
+            f"🏢 Guruh: {group_name} (`{group_id}`)\n"
+            f"👤 Kimga (Aziz): {aziz} (`{aziz_id}`)\n"
+            f"👮 Kim tomonidan (Rayxon): {rayxon}"
+        )
+        await send_log(log_text)
+
+# --- 6. ADMIN PANEL VA STATISTIKA ---
 @dp.message(Command("admin"), F.from_user.id.in_(ADMIN_IDS))
 async def admin_panel(message: Message):
     await message.answer(
-        "🎛 **Bot Admin Paneliga xush kelibsiz!**\n\nQuyidagi tugmalar yordamida bot statistikasini ko'rishingiz mumkin:",
+        "🎛 **Bot Admin Paneliga xush kelibsiz!**\n\nQuyidagi tugmalar orqali statistikani ko'rishingiz mumkin:",
         reply_markup=get_admin_keyboard()
     )
 
@@ -155,7 +151,7 @@ async def callback_stats(callback: CallbackQuery):
         f"📌 O'chirilgan pin bildirishnomalari: {stats['deleted_pins']}\n"
         f"➕ O'chirilgan '+' xabarlari: {stats['deleted_plus']}\n"
         f"⚙️ O'chirilgan moderator buyruqlari: {stats['deleted_commands']}\n"
-        f"🚫 Jami ban/kick harakatlari: {stats['total_bans']}"
+        f"🚫 Jami ban qilinganlar: {stats['total_bans']}"
     )
     await callback.message.edit_text(text, reply_markup=get_admin_keyboard())
     await callback.answer()
@@ -169,7 +165,7 @@ async def callback_refresh(callback: CallbackQuery):
         f"📌 O'chirilgan pin bildirishnomalari: {stats['deleted_pins']}\n"
         f"➕ O'chirilgan '+' xabarlari: {stats['deleted_plus']}\n"
         f"⚙️ O'chirilgan moderator buyruqlari: {stats['deleted_commands']}\n"
-        f"🚫 Jami ban/kick harakatlari: {stats['total_bans']}"
+        f"🚫 Jami ban qilinganlar: {stats['total_bans']}"
     )
     await callback.message.edit_text(text, reply_markup=get_admin_keyboard())
 
