@@ -9,8 +9,8 @@ from aiohttp import web
 
 # --- SOZLAMALAR ---
 TOKEN = "8783915374:AAFSjTvJTRiNaRgiaHfwTYBjYG4OH2ZQFgA"
-LOG_GROUP_ID = -1004384447851  # Loglar yuboriladigan guruh ID raqami
-ADMIN_IDS = [7203210832]        # Sizning Telegram ID'ingiz
+LOG_GROUP_ID = -1004384447851  
+ADMIN_IDS = [7203210832]        
 
 stats = {
     "deleted_service": 0,
@@ -31,13 +31,12 @@ def get_admin_keyboard():
     ])
 
 async def send_log(text: str):
-    """Log guruhiga xabarni zudlik bilan yuborish funksiyasi"""
     try:
         await bot.send_message(chat_id=LOG_GROUP_ID, text=text)
     except Exception as e:
         logging.error(f"Log guruhiga xabar yuborishda xatolik: {e}")
 
-# 1. Xizmat xabarlarini o'chirish (Odam qo'shilsa/chiqsa)
+# 1. Xizmat xabarlarini o'chirish
 @dp.message(F.new_chat_members | F.left_chat_member)
 async def delete_service_messages(message: Message):
     global stats
@@ -49,7 +48,6 @@ async def delete_service_messages(message: Message):
         await message.delete()
         stats["deleted_service"] += 1
         
-        # Log yuborish
         await send_log(
             f"🧹 **Xizmat xabari o'chirildi!**\n\n"
             f"🏢 Guruh: {group_name} (`{group_id}`)\n"
@@ -58,7 +56,7 @@ async def delete_service_messages(message: Message):
     except Exception as e:
         logging.error(f"Xizmat xabari xatosi: {e}")
 
-# 2. Pin xabarlarini darhol o'chirish
+# 2. Pin xabarlarini o'chirish
 @dp.message(F.pinned_message)
 async def delete_pinned_service_message(message: Message):
     global stats
@@ -69,7 +67,6 @@ async def delete_pinned_service_message(message: Message):
         await message.delete()
         stats["deleted_pins"] += 1
         
-        # Log yuborish
         await send_log(
             f"📌 **Pin xabari tozalandi!**\n\n"
             f"🏢 Guruh: {group_name} (`{group_id}`)"
@@ -77,24 +74,17 @@ async def delete_pinned_service_message(message: Message):
     except Exception as e:
         logging.error(f"Pin xabari xatosi: {e}")
 
-# 3. '+' bilan boshlangan xabarlarni o'chirish
+# 3. '+' xabarlarini o'chirish
 @dp.message(F.text.startswith("+"))
 async def delete_plus_messages(message: Message):
     global stats
     try:
-        group_name = message.chat.title
-        user_name = message.from_user.full_name if message.from_user else "Noma'lum"
-        content = message.text
-        
         await message.delete()
         stats["deleted_plus"] += 1
-        
-        # '+' lar log guruhini to'ldirib yubormasligi uchun izohga olingan, xohlasangiz ochishingiz mumkin:
-        # await send_log(f"➕ '+' xabari o'chirildi ({group_name}): {user_name} -> {content}")
     except Exception as e:
         logging.error(f"'+' xabari xatosi: {e}")
 
-# 4. Moderator buyruqlari (/ban, /kick va hokazo)
+# 4. Moderator buyruqlari
 @dp.message(F.text.regexp(r"^/(ban|kick|mute|unmute|warn|unban)(\s+@?\w+)?\b"))
 async def delete_mod_commands(message: Message):
     global stats
@@ -120,7 +110,6 @@ async def delete_mod_commands(message: Message):
             except Exception as b_err:
                 logging.error(f"Ban qilish xatosi: {b_err}")
 
-        # Log yuborish
         log_text = (
             f"🚨 **Buyruq orqali harakat:**\n\n"
             f"🏢 Guruh: {group_name} (`{group_id}`)\n"
@@ -132,7 +121,7 @@ async def delete_mod_commands(message: Message):
     except Exception as e:
         logging.error(f"Buyruqni o'chirishda xatolik: {e}")
 
-# 5. Guruhda qo'lda ban qilinganda (Nedavniy / Recent actions orqali)
+# 5. Qo'lda ban qilinganda (Nedavniy orqali)
 @dp.chat_member()
 async def track_user_ban(event: ChatMemberUpdated):
     global stats
@@ -147,7 +136,6 @@ async def track_user_ban(event: ChatMemberUpdated):
         if event.from_user:
             rayxon = event.from_user.full_name
 
-        # Log yuborish
         log_text = (
             f"🚫 **Guruhda Ban berildi!**\n\n"
             f"🏢 Guruh: {group_name} (`{group_id}`)\n"
@@ -156,7 +144,7 @@ async def track_user_ban(event: ChatMemberUpdated):
         )
         await send_log(log_text)
 
-# 6. Admin Panel komandasi
+# 6. Admin Panel
 @dp.message(Command("admin"), F.from_user.id.in_(ADMIN_IDS))
 async def admin_panel(message: Message):
     await message.answer("🎛 **Bot Admin Paneli:**", reply_markup=get_admin_keyboard())
@@ -187,7 +175,7 @@ async def callback_refresh(callback: CallbackQuery):
     )
     await callback.message.edit_text(text, reply_markup=get_admin_keyboard())
 
-# Web Server (Render uchun PORT talabini qondirish)
+# Web Server (Render uchun PORT)
 async def handle(request):
     return web.Response(text="Bot ishlayapti!")
 
@@ -202,10 +190,16 @@ async def web_server():
 
 async def main():
     asyncio.create_task(web_server())
-    # Eski konfliktlarni oldini olish uchun webhook tozalanadi
+    
+    # Konfliktni oldini olish uchun uzoqroq kutish va webhookni tozalash
+    await asyncio.sleep(3)
     await bot.delete_webhook(drop_pending_updates=True)
+    
     print("Bot muvaffaqiyatli ishga tushdi...")
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot, handle_asides=True)
+    finally:
+        await bot.session.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
