@@ -45,9 +45,17 @@ async def delete_service_messages(message: Message):
     try:
         await message.delete()
         stats["deleted_service"] += 1
-        # Log yuborish
+        
+        group_name = message.chat.title
+        group_id = message.chat.id
         user = message.from_user.full_name if message.from_user else "Noma'lum"
-        await send_log(f"🧹 Xizmat xabari o'chirildi.\nGuruh: {message.chat.title} ({message.chat.id})\nKim tomonidan: {user}")
+        
+        log_text = (
+            f"🧹 **Xizmat xabari o'chirildi!**\n"
+            f"🏢 Guruh: {group_name} (`{group_id}`)\n"
+            f"👤 Foydalanuvchi/Holat: {user}"
+        )
+        await send_log(log_text)
     except Exception as e:
         logging.error(f"Xizmat xabari xatosi: {e}")
 
@@ -56,56 +64,86 @@ async def delete_service_messages(message: Message):
 async def delete_pinned_service_message(message: Message):
     global stats
     try:
+        pinned_text = message.pinned_message.text or message.pinned_message.caption or "Media/Fayl"
         await message.delete()
         stats["deleted_pins"] += 1
-        await send_log(f"📌 Pin xabari tozalandi!\nGuruh: {message.chat.title} ({message.chat.id})")
+        
+        group_name = message.chat.title
+        group_id = message.chat.id
+        
+        log_text = (
+            f"📌 **Pin xabari tozalandi!**\n"
+            f"🏢 Guruh: {group_name} (`{group_id}`)\n"
+            f"💬 O'chirilgan pin matni: {pinned_text[:100]}"
+        )
+        await send_log(log_text)
     except Exception as e:
         logging.error(f"Pin xabari xatosi: {e}")
 
-# --- 3. '+' BILAN BOSHLANGAN XABARLARNI O'CHIRISH ---
+# --- 3. '+' BILAN BOSHLANGAN XABARLARni o'chirish ---
 @dp.message(F.text.startswith("+"))
 async def delete_plus_messages(message: Message):
     global stats
     try:
+        content = message.text
         await message.delete()
         stats["deleted_plus"] += 1
+        
+        group_name = message.chat.title
+        user = message.from_user.full_name if message.from_user else "Noma'lum"
+        
+        log_text = (
+            f"➕ **'+' xabari o'chirildi!**\n"
+            f"🏢 Guruh: {group_name}\n"
+            f"👤 Kim yozdi: {user}\n"
+            f"💬 Matn: {content}"
+        )
+        # Istasangiz "+" lar log guruhini to'ldirib yubormasligi uchun pastdagi qatorni o'chirib tashlashingiz mumkin:
+        await send_log(log_text)
     except Exception as e:
         logging.error(f"'+' xabari xatosi: {e}")
 
-# --- 4. MAXSUS MODERATOR BUYruqlarini o'chirish va Ban jarayonini loglash ---
+# --- 4. MAXSUS MODERATOR BUYRUQLARI VA BAN LOGLARI ---
 @dp.message(F.text.regexp(r"^/(ban|kick|mute|unmute|warn|unban)\b"))
 async def delete_mod_commands(message: Message):
     global stats
     try:
         command_text = message.text
-        admin_user = message.from_user.full_name if message.from_user else "Noma'lum"
-        admin_id = message.from_user.id if message.from_user else 0
+        group_name = message.chat.title
+        group_id = message.chat.id
         
+        # Kim tomonidan (Rayxon masalan)
+        rayxon = message.from_user.full_name if message.from_user else "Noma'lum"
+        rayxon_id = message.from_user.id if message.from_user else 0
+        
+        # Kimga nisbatan (Aziz masalan - agar reply qilingan bo'lsa)
+        aziz = "Ko'rsatilmagan (Reply qilinmagan)"
+        if message.reply_to_message and message.reply_to_message.from_user:
+            aziz = message.reply_to_message.from_user.full_name
+
         await message.delete()
         stats["deleted_commands"] += 1
         
         if "ban" in command_text.lower() or "kick" in command_text.lower():
             stats["total_bans"] += 1
 
-        # Kim kimga ban berganini log guruhiga yuborish
-        reply_user = message.reply_to_message.from_user.full_name if message.reply_to_message and message.reply_to_message.from_user else "Ko'rsatilmagan"
-        
+        # To'liq va tushunarli log xabari
         log_text = (
-            f"🚨 Moderator buyrug'i bajarildi va o'chirildi!\n"
-            f"💬 Buyruq: {command_text}\n"
-            f"👮 Kim tomonidan: {admin_user} (ID: {admin_id})\n"
-            f"👤 Kimga nisbatan: {reply_user}\n"
-            f"🏢 Guruh: {message.chat.title} ({message.chat.id})"
+            f"🚨 **Moderator buyrug'i bajarildi!**\n\n"
+            f"🏢 Guruh: {group_name} (`{group_id}`)\n"
+            f"⚙️ Buyruq: {command_text}\n"
+            f"👮 Kim tomonidan: {rayxon} (ID: `{rayxon_id}`)\n"
+            f"👤 Kimga (Aziz): {aziz}"
         )
         await send_log(log_text)
     except Exception as e:
         logging.error(f"Buyruqni o'chirishda xatolik: {e}")
 
-# --- 5. ADMIN PANEL VA STATISTIKA KOMANDALARI ---
+# --- 5. ADMIN PANEL VA STATISTIKA ---
 @dp.message(Command("admin"), F.from_user.id.in_(ADMIN_IDS))
 async def admin_panel(message: Message):
     await message.answer(
-        "🎛 **Bot Admin Paneliga xush kelibsiz!**\n\nQuyidagi tugmalar yordamida bot statistikasi bilan tanishishingiz mumkin:",
+        "🎛 **Bot Admin Paneliga xush kelibsiz!**\n\nQuyidagi tugmalar yordamida bot statistikasini ko'rishingiz mumkin:",
         reply_markup=get_admin_keyboard()
     )
 
@@ -135,7 +173,7 @@ async def callback_refresh(callback: CallbackQuery):
     )
     await callback.message.edit_text(text, reply_markup=get_admin_keyboard())
 
-# --- WEB SERVER (Portni band qilish uchun Render/Railway talabi) ---
+# --- WEB SERVER (Hostinglar uchun PORT) ---
 async def handle(request):
     return web.Response(text="Bot ishlayapti!")
 
@@ -149,11 +187,8 @@ async def web_server():
     await site.start()
     logging.info(f"Web server {port}-portda ishga tushdi.")
 
-# --- ASOSIY FUNKSIYA ---
 async def main():
-    # Render/Railway kabi port talab qiladigan hostinglar uchun veb-serverni ishga tushiramiz
     asyncio.create_task(web_server())
-    
     print("Bot ishga tushdi va polling boshlandi...")
     await dp.start_polling(bot)
 
