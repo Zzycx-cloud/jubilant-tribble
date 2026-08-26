@@ -32,7 +32,7 @@ def get_admin_keyboard():
 
 async def send_log(text: str):
     try:
-        await bot.send_message(chat_id=LOG_GROUP_ID, text=text)
+        await bot.send_message(chat_id=LOG_GROUP_ID, text=text, parse_mode="Markdown")
     except Exception as e:
         logging.error(f"Log guruhiga xabar yuborishda xatolik: {e}")
 
@@ -43,7 +43,12 @@ async def delete_service_messages(message: Message):
     try:
         group_name = message.chat.title
         group_id = message.chat.id
-        user_name = message.from_user.full_name if message.from_user else "Noma'lum"
+        
+        user = message.from_user
+        if user:
+            user_name = f"[{user.full_name}](tg://user?id={user.id})"
+        else:
+            user_name = "Noma'lum"
         
         await message.delete()
         stats["deleted_service"] += 1
@@ -92,13 +97,21 @@ async def delete_mod_commands(message: Message):
         command_text = message.text
         group_name = message.chat.title
         group_id = message.chat.id
-        rayxon = message.from_user.full_name if message.from_user else "Noma'lum"
         
+        # Kim tomonidan (Rayxon) - Profiliga o'tadigan mention
+        rayxon_user = message.from_user
+        if rayxon_user:
+            rayxon = f"[{rayxon_user.full_name}](tg://user?id={rayxon_user.id})"
+        else:
+            rayxon = "Noma'lum"
+        
+        # Kimga (Aziz) - Agar reply qilingan bo'lsa, uning ham profiliga o'tadigan mention
         aziz = "Ko'rsatilmagan"
         target_user_id = None
         if message.reply_to_message and message.reply_to_message.from_user:
-            aziz = message.reply_to_message.from_user.full_name
-            target_user_id = message.reply_to_message.from_user.id
+            target_user = message.reply_to_message.from_user
+            aziz = f"[{target_user.full_name}](tg://user?id={target_user.id})"
+            target_user_id = target_user.id
 
         await message.delete()
         stats["deleted_commands"] += 1
@@ -129,17 +142,20 @@ async def track_user_ban(event: ChatMemberUpdated):
         stats["total_bans"] += 1
         group_name = event.chat.title
         group_id = event.chat.id
-        aziz = event.new_chat_member.user.full_name
-        aziz_id = event.new_chat_member.user.id
         
-        rayxon = "Noma'lum (Admin)"
+        # Ban qilingan odam (Aziz) - Profiliga o'tadigan mention
+        target_user = event.new_chat_member.user
+        aziz = f"[{target_user.full_name}](tg://user?id={target_user.id})"
+        
+        # Kim ban qilgani (Rayxon) - Profiliga o'tadigan mention
+        rayxon = "Admin (Noma'lum)"
         if event.from_user:
-            rayxon = event.from_user.full_name
+            rayxon = f"[{event.from_user.full_name}](tg://user?id={event.from_user.id})"
 
         log_text = (
             f"🚫 **Guruhda Ban berildi!**\n\n"
             f"🏢 Guruh: {group_name} (`{group_id}`)\n"
-            f"👤 Kimga: {aziz} (`{aziz_id}`)\n"
+            f"👤 Kimga: {aziz}\n"
             f"👮 Kim tomonidan: {rayxon}"
         )
         await send_log(log_text)
@@ -191,13 +207,12 @@ async def web_server():
 async def main():
     asyncio.create_task(web_server())
     
-    # Konfliktni oldini olish uchun uzoqroq kutish va webhookni tozalash
     await asyncio.sleep(3)
     await bot.delete_webhook(drop_pending_updates=True)
     
     print("Bot muvaffaqiyatli ishga tushdi...")
     try:
-        await dp.start_polling(bot, handle_asides=True)
+        await dp.start_polling(bot)
     finally:
         await bot.session.close()
 
